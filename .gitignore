@@ -1,0 +1,38 @@
+# git ignore file
+
+# Ignore all files, keep folders
+*
+!*/
+
+# Ignore temporary folders
+temp/
+bin/
+lib/
+.vs/
+.git/
+
+
+# File exceptions
+!.gitignore
+!Makefile
+
+# Source files
+!*.h
+!*.hpp
+!*.inl
+!*.c
+!*.cpp
+
+# Shader files
+!*.hlsl
+
+# Scripts
+!*.cmd
+
+# Docs & info
+!*.txt
+!*.md
+
+# MSVC files
+!*.sln
+!*.vcxproj
