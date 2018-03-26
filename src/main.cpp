@@ -1,23 +1,43 @@
+#define PLATFORM_WIN32
+
+// Clean up Windows header includes.
+#define NOMINMAX
+#define STRICT
+#define WIN32_LEAN_AND_MEAN
+
+// API-specific details.
+#ifdef PLATFORM_WIN32
+    #define VK_USE_PLATFORM_WIN32_KHR
+#endif
+#define VK_MAX_LAYERS              8
+#define VK_MAX_DEVICES             8
+#define VK_MAX_QUEUE_FAMILIES      4
+#define VK_REQ_INSTANCE_EXTENSIONS 2
+#define VK_REQ_DEVICE_EXTENSIONS   1
+
 #include <cassert>
+#include <cstring>
+#include <memory>
 #include <vulkan/vulkan.h>
 
-#define VK_MAX_LAYERS         8
-#define VK_MAX_DEVICES        8
-#define VK_MAX_QUEUE_FAMILIES 4
-
 #include "utility.h"
+#include "window.h"
+
+VkResult vkCreateSurfaceKHR(VkInstance instance, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface)
+{
+#ifdef PLATFORM_WIN32
+    VkWin32SurfaceCreateInfoKHR surfaceInfo = {};
+
+    return vkCreateWin32SurfaceKHR(instance, &surfaceInfo, pAllocator, pSurface);  
+#endif
+}
 
 int main(const int argc, string_t argv[])
 {
-    argc, argv; // TODO
+    ASSERT(argc == 3, "Provide the rendering resolution (width followed by height) in the command line.");
 
-    // Use validation layers if this is a debug build.
-    string_t layers[VK_MAX_LAYERS];
-    uint32_t layerCount = 0;
-    
-#if defined(_DEBUG)
-    layers[layerCount++] = "VK_LAYER_LUNARG_standard_validation";
-#endif
+    uint16_t windowWidth  = static_cast<uint16_t>(atoi(argv[1]));
+    uint16_t windowHeight = static_cast<uint16_t>(atoi(argv[2]));
 
     VkApplicationInfo appInfo  = {};
     appInfo.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -27,40 +47,73 @@ int main(const int argc, string_t argv[])
     appInfo.applicationVersion = appInfo.engineVersion;
     appInfo.apiVersion         = VK_API_VERSION_1_1;
 
+    // Use validation layers if this is a debug build.
+    uint32_t layerCount = 0;
+    string_t layers[VK_MAX_LAYERS];
+    
+#if defined(_DEBUG)
+    layers[layerCount++] = "VK_LAYER_LUNARG_standard_validation";
+#endif
+    string_t requiredInstanceExtensions[VK_REQ_INSTANCE_EXTENSIONS] = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
+    string_t requiredDeviceExtensions[VK_REQ_DEVICE_EXTENSIONS]     = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+
+    uint32_t instanceExtensionCount;
+    CHECK_INT(vkEnumerateInstanceExtensionProperties(nullptr, &instanceExtensionCount, nullptr),
+              "Failed to enumerate extensions supported by the graphics API.");
+
+    // Note: VkExtensionProperties is a hog, so we have to allocate on the heap.
+    auto instanceExtensions = std::make_unique<VkExtensionProperties[]>(instanceExtensionCount);
+    CHECK_INT(vkEnumerateInstanceExtensionProperties(nullptr, &instanceExtensionCount, instanceExtensions.get()),
+              "Failed to enumerate extensions supported by the graphics API.");
+
+    // Check whether all the required extensions are supported.
+    uint32_t supportedInstanceExtensionCount = 0;
+
+    for (uint32_t i = 0; i < VK_REQ_INSTANCE_EXTENSIONS; i++)
+        for (uint32_t j = 0; j < instanceExtensionCount; j++)
+            if (strcmp(requiredInstanceExtensions[i], instanceExtensions[j].extensionName) == 0)
+            {
+                supportedInstanceExtensionCount++;
+                continue;
+            }
+
+    ASSERT(supportedInstanceExtensionCount == VK_REQ_INSTANCE_EXTENSIONS,
+           "Not all of the required extensions are supported by the graphics API.");
+
     VkInstanceCreateInfo instanceInfo    = {};
     instanceInfo.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instanceInfo.pApplicationInfo        = &appInfo;
     instanceInfo.enabledLayerCount       = layerCount;
     instanceInfo.ppEnabledLayerNames     = layers;
-    instanceInfo.enabledExtensionCount   = 0;       // TODO
-    instanceInfo.ppEnabledExtensionNames = nullptr; // TODO
+    instanceInfo.enabledExtensionCount   = VK_REQ_INSTANCE_EXTENSIONS;
+    instanceInfo.ppEnabledExtensionNames = requiredInstanceExtensions;
 
     VkAllocationCallbacks* allocator = nullptr; // TODO
 
     VkInstance instance;
     CHECK_INT(vkCreateInstance(&instanceInfo, allocator, &instance),
-              "Failed to create a Vulkan instance.");
+              "Failed to create a graphics API instance.");
 
-    uint32_t         physicalDeviceCount;
-    VkPhysicalDevice physicalDevices[VK_MAX_DEVICES];
+    uint32_t physicalDeviceCount;
     CHECK_INT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, nullptr),
               "Failed to enumerate physical graphics devices.");
+
+    VkPhysicalDevice physicalDevices[VK_MAX_DEVICES];
     CHECK_INT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices),
               "Failed to enumerate physical graphics devices.");
 
     VkPhysicalDevice         physicalDevice = nullptr;
     VkPhysicalDeviceFeatures physicalDeviceFeatures;
               
-    uint32_t queueFamilyCount;
     uint32_t graphicsQueueFamilyIndex       = UINT32_MAX;
     uint32_t computeQueueFamilyIndex        = UINT32_MAX;
     uint32_t transferQueueFamilyIndex       = UINT32_MAX;
     uint32_t sparseResourceQueueFamilyIndex = UINT32_MAX;
 
     // Select a physical device, and query its properties.
-    for (uint32_t i = 0; i < physicalDeviceCount; i++)
+    for (uint32_t d = 0; d < physicalDeviceCount; d++)
     {
-        VkPhysicalDevice device = physicalDevices[i];
+        VkPhysicalDevice device = physicalDevices[d];
 
         VkPhysicalDeviceProperties deviceProperties;
         VkPhysicalDeviceFeatures   deviceFeatures;
@@ -75,46 +128,73 @@ int main(const int argc, string_t argv[])
             physicalDevice         = device;
             physicalDeviceFeatures = deviceFeatures;
 
-            VkQueueFamilyProperties queueFamilies[VK_MAX_QUEUE_FAMILIES];
+            uint32_t queueFamilyCount;
             vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+            VkQueueFamilyProperties queueFamilies[VK_MAX_QUEUE_FAMILIES];
             vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies);
 
-            // Enumerate all queue family types.
-            for (uint32_t j = 0; j < queueFamilyCount; j++)
+            // Enumerate all queue families.
+            for (uint32_t q = 0; q < queueFamilyCount; q++)
             {
-                VkQueueFlags queueFlags = queueFamilies[j].queueFlags;
+                VkQueueFlags queueFlags = queueFamilies[q].queueFlags;
 
-                constexpr VkQueueFlags primaryQueueFlags = VK_QUEUE_GRAPHICS_BIT |
-                                                           VK_QUEUE_COMPUTE_BIT  |
-                                                           VK_QUEUE_TRANSFER_BIT |
-                                                           VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
+                constexpr VkQueueFlags primaryQueueFlags = VK_QUEUE_GRAPHICS_BIT
+                                                         | VK_QUEUE_COMPUTE_BIT
+                                                         | VK_QUEUE_TRANSFER_BIT
+                                                         | VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
 
                 // We rely on the graphics queue to support all functionality.
                 if ((queueFlags & primaryQueueFlags) == primaryQueueFlags)
                 {
-                    graphicsQueueFamilyIndex = j;
+                    graphicsQueueFamilyIndex = q;
                 }
                 else if (queueFlags & VK_QUEUE_COMPUTE_BIT)
                 {
-                    computeQueueFamilyIndex = j;
+                    computeQueueFamilyIndex = q;
                 }
                 else if (queueFlags & VK_QUEUE_TRANSFER_BIT)
                 {
-                    transferQueueFamilyIndex = j;
+                    transferQueueFamilyIndex = q;
                 }
                 else if (queueFlags & VK_QUEUE_SPARSE_BINDING_BIT)
                 {
-                    sparseResourceQueueFamilyIndex = j;
+                    sparseResourceQueueFamilyIndex = q;
                 }
             }
+
+            uint32_t deviceExtensionCount;
+            CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, nullptr),
+                      "Failed to enumerate extensions supported by the graphics device.");
+
+            // Note: VkExtensionProperties is a hog, so we have to allocate on the heap.
+            auto deviceExtensions = std::make_unique<VkExtensionProperties[]>(deviceExtensionCount);
+            CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, deviceExtensions.get()),
+                      "Failed to enumerate extensions supported by the graphics device.");
+
+            // Check whether all the required extensions are supported.
+            uint32_t supportedDeviceExtensionCount = 0;
+
+            for (uint32_t i = 0; i < VK_REQ_DEVICE_EXTENSIONS; i++)
+                for (uint32_t j = 0; j < deviceExtensionCount; j++)
+                    if (strcmp(requiredDeviceExtensions[i], deviceExtensions[j].extensionName) == 0)
+                    {
+                        supportedDeviceExtensionCount++;
+                        continue;
+                    }
+
+            ASSERT(supportedDeviceExtensionCount == VK_REQ_DEVICE_EXTENSIONS,
+                   "Not all of the required extensions are supported by the graphics device.");
+
+            break;
         }
     }
 
-    CHECK_PTR(physicalDevice, "Failed to find a compatible physical graphics device.");
+    ASSERT(physicalDevice, "Failed to find a compatible physical graphics device.");
 
     // Create one queue per family.
+    uint32_t                queueCount = 0;
     VkDeviceQueueCreateInfo queueInfos[VK_MAX_QUEUE_FAMILIES] = {};
-    uint32_t queueCount = 0;
 
     constexpr float normalPriority = 1.0f;
 
@@ -162,16 +242,14 @@ int main(const int argc, string_t argv[])
         queueCount++;
     }
 
-    assert(queueCount == queueFamilyCount);
-
     // Create a logical device. Enable all supported features.
     VkDeviceCreateInfo deviceInfo      = {};
     deviceInfo.queueCreateInfoCount    = queueCount;
     deviceInfo.pQueueCreateInfos       = queueInfos;
     deviceInfo.enabledLayerCount       = instanceInfo.enabledLayerCount;
     deviceInfo.ppEnabledLayerNames     = instanceInfo.ppEnabledLayerNames;
-    deviceInfo.enabledExtensionCount   = instanceInfo.enabledExtensionCount;
-    deviceInfo.ppEnabledExtensionNames = instanceInfo.ppEnabledExtensionNames;
+    deviceInfo.enabledExtensionCount   = VK_REQ_DEVICE_EXTENSIONS;
+    deviceInfo.ppEnabledExtensionNames = requiredDeviceExtensions;
     deviceInfo.pEnabledFeatures        = &physicalDeviceFeatures;
 
     VkDevice virtualDevice;
@@ -217,6 +295,8 @@ int main(const int argc, string_t argv[])
         // No async sparse resource management, fall back to the graphics queue.
         sparseResourceQueue = graphicsQueue;
     }
+
+    Window::open(windowHeight, windowWidth);
 
     // Clean up.
     // API note: you only have to vkDestroy() objects you vkCreate().

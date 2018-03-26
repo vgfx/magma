@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <malloc.h>
 
 using byte_t   = unsigned char;
 using size_t   = size_t;
@@ -80,14 +81,21 @@ do                                   \
     }                                \
 } while (0)
 
-// Prints the C string 'errMsg' if the pointer is NULL.
-#define CHECK_PTR(ptr, errMsg)       \
+// Prints the C string 'errMsg' if the value is convertible to 'false'.
+#define ASSERT(value, errMsg)        \
 do                                   \
 {                                    \
-    if (ptr == nullptr)              \
+    if (!(value))                    \
     {                                \
         __debugbreak();              \
         printError(errMsg);          \
         panic(__FILE__, __LINE__);   \
     }                                \
 } while (0)
+
+// Performs stack allocation for 'count' objects of the type T.
+template <typename T>
+T* Alloca(size_t count)
+{
+    return static_cast<T*>(_alloca(count * sizeof(T)));
+}
