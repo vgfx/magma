@@ -244,6 +244,7 @@ int main(const int argc, string_t argv[])
 
     // Create a logical device. Enable all supported features.
     VkDeviceCreateInfo deviceInfo      = {};
+    deviceInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceInfo.queueCreateInfoCount    = queueCount;
     deviceInfo.pQueueCreateInfos       = queueInfos;
     deviceInfo.enabledLayerCount       = instanceInfo.enabledLayerCount;
