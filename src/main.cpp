@@ -1,12 +1,10 @@
-#define PLATFORM_WIN32
-
 // Clean up Windows header includes.
 #define NOMINMAX
 #define STRICT
 #define WIN32_LEAN_AND_MEAN
 
 // API-specific details. Define -before- including API headers.
-#ifdef PLATFORM_WIN32
+#ifdef WIN32
     #define VK_USE_PLATFORM_WIN32_KHR
 #endif
 #define VK_MAX_LAYERS              8
@@ -24,18 +22,9 @@
 #include "window.h"
 
 // API-specific details. Define -after- including API headers.
-#ifdef PLATFORM_WIN32
+#ifdef WIN32
     #define VK_PLATFORM_SURFACE_EXTENSION_NAME VK_KHR_WIN32_SURFACE_EXTENSION_NAME
 #endif
-
-VkResult vkCreateSurfaceKHR(VkInstance instance, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface)
-{
-#ifdef PLATFORM_WIN32
-    VkWin32SurfaceCreateInfoKHR surfaceInfo = {};
-
-    return vkCreateWin32SurfaceKHR(instance, &surfaceInfo, pAllocator, pSurface);  
-#endif
-}
 
 bool ContainsExtension(string_t name, const VkExtensionProperties list[], size_t count)
 {
@@ -48,6 +37,13 @@ bool ContainsExtension(string_t name, const VkExtensionProperties list[], size_t
     }
 
     return false;
+}
+
+VkResult vkCreateSurfaceKHR(VkInstance instance, const void* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface)
+{
+#ifdef WIN32
+    return vkCreateWin32SurfaceKHR(instance, static_cast<const VkWin32SurfaceCreateInfoKHR*>(pCreateInfo), pAllocator, pSurface);  
+#endif
 }
 
 int main(const int argc, string_t argv[])
@@ -245,7 +241,7 @@ int main(const int argc, string_t argv[])
         queueCount++;
     }
 
-    // Create a logical device. Enable all supported features.
+    // Create a virtual device. Enable all supported features.
     VkDeviceCreateInfo deviceInfo      = {};
     deviceInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceInfo.queueCreateInfoCount    = queueCount;
@@ -300,7 +296,19 @@ int main(const int argc, string_t argv[])
         sparseResourceQueue = graphicsQueue;
     }
 
+    // Create the OS window used for drawing. Needed to create the swap chain. 
     Window::open(windowHeight, windowWidth);
+
+#ifdef WIN32
+    VkWin32SurfaceCreateInfoKHR surfaceInfo = {};
+    surfaceInfo.sType     = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    surfaceInfo.hinstance = Window::instance();
+    surfaceInfo.hwnd      = Window::handle();
+#endif
+
+    VkSurfaceKHR surface;
+    CHECK_INT(vkCreateSurfaceKHR(instance, &surfaceInfo, allocator, &surface),
+              "Failed to create a presentation surface.");
 
     // Clean up.
     // API note: you only have to vkDestroy() objects you vkCreate().

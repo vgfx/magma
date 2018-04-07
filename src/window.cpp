@@ -12,9 +12,10 @@
 #include "utility.h"
 
 // Perform static member initialization.
-uint16_t Window::m_width  = 0;
-uint16_t Window::m_height = 0;
-HWND     Window::m_hwnd   = nullptr;
+uint16_t  Window::m_width  = 0;
+uint16_t  Window::m_height = 0;
+HWND      Window::m_hwnd   = nullptr;
+HINSTANCE Window::m_hinst  = nullptr;
 
 // Main message handler.
 LRESULT CALLBACK WindowProc(const HWND hWnd, const UINT message,
@@ -45,14 +46,14 @@ void Window::open(const uint16_t width, const uint16_t height)
     RECT rect = { 0, 0, static_cast<long>(width), static_cast<long>(height) };
     AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
 
-    // Get the handle to the instance of the application.
-    const HINSTANCE appHandle = GetModuleHandle(nullptr);
+    // Get the handle of the application.
+    m_hinst = GetModuleHandle(nullptr);
 
     // Register the window class.
     WNDCLASS wndClass      = {};
     wndClass.style         = CS_HREDRAW | CS_VREDRAW;
     wndClass.lpfnWndProc   = WindowProc;
-    wndClass.hInstance     = appHandle;
+    wndClass.hInstance     = m_hinst;
     wndClass.hCursor       = LoadCursor(nullptr, IDC_ARROW);
     wndClass.lpszClassName = L"ReDXWindowClass";
     ASSERT(RegisterClass(&wndClass), "RegisterClass failed.");
@@ -64,12 +65,18 @@ void Window::open(const uint16_t width, const uint16_t height)
                           rect.right - rect.left,
                           rect.bottom - rect.top,
                           nullptr, nullptr,                        // No parent window, no menus
-                          appHandle, nullptr);
+                          m_hinst, nullptr);
 
     ASSERT(m_hwnd, "CreateWindow failed.");
 
     // Make the window visible.
     ShowWindow(m_hwnd, SW_SHOWNORMAL);
+}
+
+HINSTANCE Window::instance()
+{
+    assert(m_hinst && "Uninitialized application handle.");
+    return m_hinst;
 }
 
 HWND Window::handle()
