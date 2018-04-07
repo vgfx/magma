@@ -21,7 +21,8 @@ static inline void printInternal(FILE* stream, string_t prefix, string_t fmt, co
     localtime_s(&timeInfo, &rawTime);
     fprintf(stream, "[%i:%i:%i] ", timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
     // Print the prefix if there is one.
-    if (prefix) {
+    if (prefix)
+    {
         fprintf(stream, "%s ", prefix);
     }
     // Print the arguments.
@@ -69,28 +70,30 @@ static inline void printError(string_t fmt, ...)
 #define TERMINATE() panic(__FILE__, __LINE__)
 
 // Prints the C string 'errMsg' if the error code is not 0.
-#define CHECK_INT(err, errMsg)       \
-do                                   \
-{                                    \
-    volatile const int result = err; \
-    if (result != 0)                 \
-    {                                \
-        __debugbreak();              \
-        printError(errMsg);          \
-        panic(__FILE__, __LINE__);   \
-    }                                \
+// Then prints the location of the fatal error and terminates the program.
+#define CHECK_INT(err, errMsg, ...)      \
+do                                       \
+{                                        \
+    volatile const sign_t result = err;  \
+    if (result != 0)                     \
+    {                                    \
+        printError(errMsg, __VA_ARGS__); \
+        __debugbreak();                  \
+        TERMINATE();                     \
+    }                                    \
 } while (0)
 
 // Prints the C string 'errMsg' if the value is convertible to 'false'.
-#define ASSERT(value, errMsg)        \
-do                                   \
-{                                    \
-    if (!(value))                    \
-    {                                \
-        __debugbreak();              \
-        printError(errMsg);          \
-        panic(__FILE__, __LINE__);   \
-    }                                \
+// Then prints the location of the fatal error and terminates the program.
+#define ASSERT(value, errMsg, ...)       \
+do                                       \
+{                                        \
+    if (!(value))                        \
+    {                                    \
+        printError(errMsg, __VA_ARGS__); \
+        __debugbreak();                  \
+        TERMINATE();                     \
+    }                                    \
 } while (0)
 
 // Performs stack allocation for 'count' objects of the type T.

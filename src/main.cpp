@@ -5,7 +5,7 @@
 #define STRICT
 #define WIN32_LEAN_AND_MEAN
 
-// API-specific details.
+// API-specific details. Define -before- including API headers.
 #ifdef PLATFORM_WIN32
     #define VK_USE_PLATFORM_WIN32_KHR
 #endif
@@ -23,6 +23,11 @@
 #include "utility.h"
 #include "window.h"
 
+// API-specific details. Define -after- including API headers.
+#ifdef PLATFORM_WIN32
+    #define VK_PLATFORM_SURFACE_EXTENSION_NAME VK_KHR_WIN32_SURFACE_EXTENSION_NAME
+#endif
+
 VkResult vkCreateSurfaceKHR(VkInstance instance, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface)
 {
 #ifdef PLATFORM_WIN32
@@ -30,6 +35,19 @@ VkResult vkCreateSurfaceKHR(VkInstance instance, const VkAllocationCallbacks* pA
 
     return vkCreateWin32SurfaceKHR(instance, &surfaceInfo, pAllocator, pSurface);  
 #endif
+}
+
+bool ContainsExtension(string_t name, const VkExtensionProperties list[], size_t count)
+{
+    for (size_t i = 0; i < count; i++)
+    {
+        if (strcmp(name, list[i].extensionName) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 int main(const int argc, string_t argv[])
@@ -47,38 +65,32 @@ int main(const int argc, string_t argv[])
     appInfo.applicationVersion = appInfo.engineVersion;
     appInfo.apiVersion         = VK_API_VERSION_1_1;
 
-    // Use validation layers if this is a debug build.
     uint32_t layerCount = 0;
     string_t layers[VK_MAX_LAYERS];
     
 #if defined(_DEBUG)
+    // Use validation layers if this is a debug build.
     layers[layerCount++] = "VK_LAYER_LUNARG_standard_validation";
 #endif
-    string_t requiredInstanceExtensions[VK_REQ_INSTANCE_EXTENSIONS] = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
+
+    string_t requiredInstanceExtensions[VK_REQ_INSTANCE_EXTENSIONS] = { VK_KHR_SURFACE_EXTENSION_NAME, VK_PLATFORM_SURFACE_EXTENSION_NAME };
     string_t requiredDeviceExtensions[VK_REQ_DEVICE_EXTENSIONS]     = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
     uint32_t instanceExtensionCount;
     CHECK_INT(vkEnumerateInstanceExtensionProperties(nullptr, &instanceExtensionCount, nullptr),
               "Failed to enumerate extensions supported by the graphics API.");
 
-    // Note: VkExtensionProperties is a hog, so we have to allocate on the heap.
+    // Note: VkExtensionProperties is large, so we have to allocate on the heap.
     auto instanceExtensions = std::make_unique<VkExtensionProperties[]>(instanceExtensionCount);
     CHECK_INT(vkEnumerateInstanceExtensionProperties(nullptr, &instanceExtensionCount, instanceExtensions.get()),
               "Failed to enumerate extensions supported by the graphics API.");
 
     // Check whether all the required extensions are supported.
-    uint32_t supportedInstanceExtensionCount = 0;
-
-    for (uint32_t i = 0; i < VK_REQ_INSTANCE_EXTENSIONS; i++)
-        for (uint32_t j = 0; j < instanceExtensionCount; j++)
-            if (strcmp(requiredInstanceExtensions[i], instanceExtensions[j].extensionName) == 0)
-            {
-                supportedInstanceExtensionCount++;
-                continue;
-            }
-
-    ASSERT(supportedInstanceExtensionCount == VK_REQ_INSTANCE_EXTENSIONS,
-           "Not all of the required extensions are supported by the graphics API.");
+    for (string_t extName : requiredInstanceExtensions)
+    {
+        ASSERT(ContainsExtension(extName, instanceExtensions.get(), instanceExtensionCount),
+               "The extension \'%s\' is not supported by the graphics API.", extName);
+    }
 
     VkInstanceCreateInfo instanceInfo    = {};
     instanceInfo.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -167,26 +179,17 @@ int main(const int argc, string_t argv[])
             CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, nullptr),
                       "Failed to enumerate extensions supported by the graphics device.");
 
-            // Note: VkExtensionProperties is a hog, so we have to allocate on the heap.
+            // Note: VkExtensionProperties is large, so we have to allocate on the heap.
             auto deviceExtensions = std::make_unique<VkExtensionProperties[]>(deviceExtensionCount);
             CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, deviceExtensions.get()),
                       "Failed to enumerate extensions supported by the graphics device.");
 
             // Check whether all the required extensions are supported.
-            uint32_t supportedDeviceExtensionCount = 0;
-
-            for (uint32_t i = 0; i < VK_REQ_DEVICE_EXTENSIONS; i++)
-                for (uint32_t j = 0; j < deviceExtensionCount; j++)
-                    if (strcmp(requiredDeviceExtensions[i], deviceExtensions[j].extensionName) == 0)
-                    {
-                        supportedDeviceExtensionCount++;
-                        continue;
-                    }
-
-            ASSERT(supportedDeviceExtensionCount == VK_REQ_DEVICE_EXTENSIONS,
-                   "Not all of the required extensions are supported by the graphics device.");
-
-            break;
+            for (string_t extName : requiredDeviceExtensions)
+            {
+                ASSERT(ContainsExtension(extName, deviceExtensions.get(), deviceExtensionCount),
+                       "The extension \'%s\' is not supported by the graphics device.", extName);
+            }
         }
     }
 
