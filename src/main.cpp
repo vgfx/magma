@@ -136,60 +136,62 @@ int main(const int argc, string_t argv[])
             physicalDevice         = device;
             physicalDeviceFeatures = deviceFeatures;
 
-            uint32_t queueFamilyCount;
-            vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-
-            VkQueueFamilyProperties queueFamilies[VK_MAX_QUEUE_FAMILIES];
-            vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies);
-
-            // Enumerate all queue families.
-            for (uint32_t q = 0; q < queueFamilyCount; q++)
-            {
-                VkQueueFlags queueFlags = queueFamilies[q].queueFlags;
-
-                constexpr VkQueueFlags primaryQueueFlags = VK_QUEUE_GRAPHICS_BIT
-                                                         | VK_QUEUE_COMPUTE_BIT
-                                                         | VK_QUEUE_TRANSFER_BIT
-                                                         | VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
-
-                // We rely on the graphics queue to support all functionality.
-                if ((queueFlags & primaryQueueFlags) == primaryQueueFlags)
-                {
-                    graphicsQueueFamilyIndex = q;
-                }
-                else if (queueFlags & VK_QUEUE_COMPUTE_BIT)
-                {
-                    computeQueueFamilyIndex = q;
-                }
-                else if (queueFlags & VK_QUEUE_TRANSFER_BIT)
-                {
-                    transferQueueFamilyIndex = q;
-                }
-                else if (queueFlags & VK_QUEUE_SPARSE_BINDING_BIT)
-                {
-                    sparseResourceQueueFamilyIndex = q;
-                }
-            }
-
-            uint32_t deviceExtensionCount;
-            CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, nullptr),
-                      "Failed to enumerate extensions supported by the graphics device.");
-
-            // Note: VkExtensionProperties is large, so we have to allocate on the heap.
-            auto deviceExtensions = std::make_unique<VkExtensionProperties[]>(deviceExtensionCount);
-            CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, deviceExtensions.get()),
-                      "Failed to enumerate extensions supported by the graphics device.");
-
-            // Check whether all the required extensions are supported.
-            for (string_t extName : requiredDeviceExtensions)
-            {
-                ASSERT(ContainsExtension(extName, deviceExtensions.get(), deviceExtensionCount),
-                       "The extension \'%s\' is not supported by the graphics device.", extName);
-            }
+            break;
         }
     }
 
     ASSERT(physicalDevice, "Failed to find a compatible physical graphics device.");
+
+    uint32_t deviceExtensionCount;
+    CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, nullptr),
+              "Failed to enumerate extensions supported by the graphics device.");
+
+    // Note: VkExtensionProperties is large, so we have to allocate on the heap.
+    auto deviceExtensions = std::make_unique<VkExtensionProperties[]>(deviceExtensionCount);
+    CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, deviceExtensions.get()),
+              "Failed to enumerate extensions supported by the graphics device.");
+
+    // Check whether all the required extensions are supported.
+    for (string_t extName : requiredDeviceExtensions)
+    {
+        ASSERT(ContainsExtension(extName, deviceExtensions.get(), deviceExtensionCount),
+               "The extension \'%s\' is not supported by the graphics device.", extName);
+    }
+
+    uint32_t queueFamilyCount;
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
+
+    VkQueueFamilyProperties queueFamilies[VK_MAX_QUEUE_FAMILIES];
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies);
+
+    // Enumerate all queue families.
+    for (uint32_t q = 0; q < queueFamilyCount; q++)
+    {
+        VkQueueFlags queueFlags = queueFamilies[q].queueFlags;
+
+        constexpr VkQueueFlags primaryQueueFlags = VK_QUEUE_GRAPHICS_BIT
+                                                 | VK_QUEUE_COMPUTE_BIT
+                                                 | VK_QUEUE_TRANSFER_BIT
+                                                 | VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
+
+        // We rely on the graphics queue to support all functionality.
+        if ((queueFlags & primaryQueueFlags) == primaryQueueFlags)
+        {
+            graphicsQueueFamilyIndex = q;
+        }
+        else if (queueFlags & VK_QUEUE_COMPUTE_BIT)
+        {
+            computeQueueFamilyIndex = q;
+        }
+        else if (queueFlags & VK_QUEUE_TRANSFER_BIT)
+        {
+            transferQueueFamilyIndex = q;
+        }
+        else if (queueFlags & VK_QUEUE_SPARSE_BINDING_BIT)
+        {
+            sparseResourceQueueFamilyIndex = q;
+        }
+    }
 
     // Create one queue per family.
     uint32_t                queueCount = 0;
@@ -242,24 +244,21 @@ int main(const int argc, string_t argv[])
     }
 
     // Create a virtual device. Enable all supported features.
-    VkDeviceCreateInfo deviceInfo      = {};
-    deviceInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    deviceInfo.queueCreateInfoCount    = queueCount;
-    deviceInfo.pQueueCreateInfos       = queueInfos;
-    deviceInfo.enabledLayerCount       = instanceInfo.enabledLayerCount;
-    deviceInfo.ppEnabledLayerNames     = instanceInfo.ppEnabledLayerNames;
-    deviceInfo.enabledExtensionCount   = VK_REQ_DEVICE_EXTENSIONS;
-    deviceInfo.ppEnabledExtensionNames = requiredDeviceExtensions;
-    deviceInfo.pEnabledFeatures        = &physicalDeviceFeatures;
+    VkDeviceCreateInfo virtualDeviceInfo      = {};
+    virtualDeviceInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    virtualDeviceInfo.queueCreateInfoCount    = queueCount;
+    virtualDeviceInfo.pQueueCreateInfos       = queueInfos;
+    virtualDeviceInfo.enabledLayerCount       = instanceInfo.enabledLayerCount;
+    virtualDeviceInfo.ppEnabledLayerNames     = instanceInfo.ppEnabledLayerNames;
+    virtualDeviceInfo.enabledExtensionCount   = VK_REQ_DEVICE_EXTENSIONS;
+    virtualDeviceInfo.ppEnabledExtensionNames = requiredDeviceExtensions;
+    virtualDeviceInfo.pEnabledFeatures        = &physicalDeviceFeatures;
 
     VkDevice virtualDevice;
-    CHECK_INT(vkCreateDevice(physicalDevice, &deviceInfo, allocator, &virtualDevice),
+    CHECK_INT(vkCreateDevice(physicalDevice, &virtualDeviceInfo, allocator, &virtualDevice),
               "Failed to create a virtual graphics device.");
 
-    VkQueue graphicsQueue = nullptr;
-    VkQueue computeQueue;
-    VkQueue transferQueue;
-    VkQueue sparseResourceQueue;
+    VkQueue graphicsQueue, computeQueue, transferQueue, sparseResourceQueue;
 
     if (graphicsQueueFamilyIndex != UINT32_MAX)
     {
