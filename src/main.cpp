@@ -127,7 +127,7 @@ int main(const int argc, string_t argv[])
     VkPhysicalDevice         physicalDevice = nullptr;
     VkPhysicalDeviceFeatures physicalDeviceFeatures;
               
-    uint32_t graphicsQueueFamilyIndex, computeQueueFamilyIndex, transferQueueFamilyIndex;
+    uint32_t graphicsQueueFamilyIndex, computeQueueFamilyIndex, transferQueueFamilyIndex, presentQueueFamilyIndex;
 
     // Select a physical device, and query its properties.
     for (uint32_t i = 0; i < physicalDeviceCount; i++)
@@ -158,7 +158,7 @@ int main(const int argc, string_t argv[])
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies);
 
         // Enumerate all queue families.
-        graphicsQueueFamilyIndex = computeQueueFamilyIndex = transferQueueFamilyIndex = UINT32_MAX;
+        graphicsQueueFamilyIndex = computeQueueFamilyIndex = transferQueueFamilyIndex = presentQueueFamilyIndex = UINT32_MAX;
 
         for (uint32_t q = 0; q < queueFamilyCount; q++)
         {
@@ -173,9 +173,15 @@ int main(const int argc, string_t argv[])
                                                      | VK_QUEUE_TRANSFER_BIT;
 
             // We rely on the graphics queue to support all functionality.
-            if (queueSupportsPresentation && (queueFlags & primaryQueueFlags) == primaryQueueFlags)
+            if ((queueFlags & primaryQueueFlags) == primaryQueueFlags)
             {
                 graphicsQueueFamilyIndex = q;
+
+                // Use the graphics queue to present, if possible.
+                if (queueSupportsPresentation)
+                {
+                    presentQueueFamilyIndex = q;
+                }
             }
             else if (queueFlags & VK_QUEUE_COMPUTE_BIT)
             {
@@ -184,6 +190,12 @@ int main(const int argc, string_t argv[])
             else if (queueFlags & VK_QUEUE_TRANSFER_BIT)
             {
                 transferQueueFamilyIndex = q;
+            }
+            else if (queueSupportsPresentation && presentQueueFamilyIndex != UINT32_MAX)
+            {
+                // If the graphics queue does not support presentation,
+                // use the dedicated presentation queue.
+                presentQueueFamilyIndex = q;
             }
         }
 
@@ -197,7 +209,8 @@ int main(const int argc, string_t argv[])
         if (deviceProperties.apiVersion >= appInfo.apiVersion &&
             deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
             deviceSupportsRequiredExtensions &&
-            graphicsQueueFamilyIndex != UINT32_MAX)
+            graphicsQueueFamilyIndex != UINT32_MAX &&
+            presentQueueFamilyIndex != UINT32_MAX)
         {
             physicalDevice         = device;
             physicalDeviceFeatures = deviceFeatures;
@@ -244,6 +257,16 @@ int main(const int argc, string_t argv[])
         queueCount++;
     }
 
+    if (presentQueueFamilyIndex != graphicsQueueFamilyIndex)
+    {
+        queueInfos[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueInfos[queueCount].queueFamilyIndex = presentQueueFamilyIndex;
+        queueInfos[queueCount].queueCount       = 1;
+        queueInfos[queueCount].pQueuePriorities = &normalPriority;        
+
+        queueCount++;
+    }
+
     // Create a virtual device. Enable all supported features.
     VkDeviceCreateInfo virtualDeviceInfo      = {};
     virtualDeviceInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -259,7 +282,7 @@ int main(const int argc, string_t argv[])
     CHECK_INT(vkCreateDevice(physicalDevice, &virtualDeviceInfo, allocator, &virtualDevice),
               "Failed to create a virtual graphics device.");
 
-    VkQueue graphicsQueue, computeQueue, transferQueue;
+    VkQueue graphicsQueue, computeQueue, transferQueue, presentQueue;
 
     if (graphicsQueueFamilyIndex != UINT32_MAX)
     {
@@ -284,6 +307,16 @@ int main(const int argc, string_t argv[])
     {
         // No async transfers, fall back to the graphics queue.
         transferQueue = graphicsQueue;
+    }
+
+    if (presentQueueFamilyIndex != graphicsQueueFamilyIndex)
+    {
+        // Use a dedicated presentation queue.
+        vkGetDeviceQueue(virtualDevice, presentQueueFamilyIndex, 0, &graphicsQueue);
+    }
+    else
+    {
+        presentQueue = graphicsQueue;
     }
 
     // Clean up.
