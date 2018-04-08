@@ -37,7 +37,7 @@ LRESULT CALLBACK WindowProc(const HWND hWnd, const UINT message,
     }
 }
 
-void Window::open(const uint16_t width, const uint16_t height)
+void Window::Create(const uint16_t width, const uint16_t height)
 {
     m_width  = width;
     m_height = height;
@@ -68,34 +68,43 @@ void Window::open(const uint16_t width, const uint16_t height)
                           m_hinst, nullptr);
 
     ASSERT(m_hwnd, "CreateWindow failed.");
+}
 
-    // Make the window visible.
+void Window::Show()
+{
+    assert(m_hwnd && "Uninitialized window handle.");
     ShowWindow(m_hwnd, SW_SHOWNORMAL);
 }
 
-HINSTANCE Window::instance()
+void Window::Hide()
+{
+    assert(m_hwnd && "Uninitialized window handle.");
+    ShowWindow(m_hwnd, SW_HIDE);
+}
+
+HINSTANCE Window::Instance()
 {
     assert(m_hinst && "Uninitialized application handle.");
     return m_hinst;
 }
 
-HWND Window::handle()
+HWND Window::Handle()
 {
     assert(m_hwnd && "Uninitialized window handle.");
     return m_hwnd;
 }
 
-uint16_t Window::width()
+uint16_t Window::Width()
 {
     return m_width;
 }
 
-uint16_t Window::height()
+uint16_t Window::Height()
 {
     return m_height;
 }
 
-void Window::updateTitleBar(const float cpuFrameTime, const float gpuFrameTime)
+void Window::UpdateTitle(const float cpuFrameTime, const float gpuFrameTime)
 {
     static wchar_t title[] = L"Magma > CPU: 00.00 ms | GPU: 00.00 ms";
     swprintf(title, _countof(title) + 1, L"Magma > CPU: %5.2f ms | GPU: %5.2f ms",

@@ -12,7 +12,7 @@ using sign_t   = ptrdiff_t;
 using string_t = const char*;
 
 // For internal use only!
-static inline void printInternal(FILE* stream, string_t prefix, string_t fmt, const va_list args)
+static inline void PrintInternal(FILE* stream, string_t prefix, string_t fmt, const va_list args)
 {
     // Print the time stamp.
     time_t rawTime;
@@ -30,44 +30,44 @@ static inline void printInternal(FILE* stream, string_t prefix, string_t fmt, co
 }
 
 // Prints information to stdout (printf syntax) and appends a newline at the end.
-static inline void printInfo(string_t fmt, ...)
+static inline void PrintInfo(string_t fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    printInternal(stdout, nullptr, fmt, args);
+    PrintInternal(stdout, nullptr, fmt, args);
     va_end(args);
     fputs("\n", stdout);
 }
 
 // Prints warnings to stdout (printf syntax) and appends a newline at the end.
-static inline void printWarning(string_t fmt, ...)
+static inline void PrintWarning(string_t fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    printInternal(stdout, "Warning:", fmt, args);
+    PrintInternal(stdout, "Warning:", fmt, args);
     va_end(args);
     fputs("\n", stdout);
 }
 
 // Prints fatal errors to stderr (printf syntax) and appends a newline at the end.
-static inline void printError(string_t fmt, ...)
+static inline void PrintError(string_t fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    printInternal(stderr, "Error:", fmt, args);
+    PrintInternal(stderr, "Error:", fmt, args);
     va_end(args);
     fputs("\n", stderr);
 }
 
 // For internal use only!
-[[noreturn]] static inline void panic(string_t file, const int line)
+[[noreturn]] static inline void Panic(string_t file, const int line)
 {
     fprintf(stderr, "Error location: %s : %i\n", file, line);
     abort();
 }
 
 // Prints the location of the fatal error and terminates the program.
-#define TERMINATE() panic(__FILE__, __LINE__)
+#define TERMINATE() Panic(__FILE__, __LINE__)
 
 // Prints the C string 'errMsg' if the error code is not 0.
 // Then prints the location of the fatal error and terminates the program.
@@ -77,7 +77,7 @@ do                                       \
     volatile const sign_t result = err;  \
     if (result != 0)                     \
     {                                    \
-        printError(errMsg, __VA_ARGS__); \
+        PrintError(errMsg, __VA_ARGS__); \
         __debugbreak();                  \
         TERMINATE();                     \
     }                                    \
@@ -90,7 +90,7 @@ do                                       \
 {                                        \
     if (!(value))                        \
     {                                    \
-        printError(errMsg, __VA_ARGS__); \
+        PrintError(errMsg, __VA_ARGS__); \
         __debugbreak();                  \
         TERMINATE();                     \
     }                                    \

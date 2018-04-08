@@ -48,7 +48,7 @@ VkResult vkCreateSurfaceKHR(VkInstance instance, const void* pCreateInfo, const 
 
 int main(const int argc, string_t argv[])
 {
-    ASSERT(argc == 3, "Provide the rendering resolution (width followed by height) in the command line.");
+    ASSERT(argc == 3, "Missing command line agruments: resolution. E.g.: 1920 1080.");
 
     uint16_t windowWidth  = static_cast<uint16_t>(atoi(argv[1]));
     uint16_t windowHeight = static_cast<uint16_t>(atoi(argv[2]));
@@ -64,7 +64,7 @@ int main(const int argc, string_t argv[])
     uint32_t layerCount = 0;
     string_t layers[VK_MAX_LAYERS];
     
-#if defined(_DEBUG)
+#ifdef _DEBUG
     // Use validation layers if this is a debug build.
     layers[layerCount++] = "VK_LAYER_LUNARG_standard_validation";
 #endif
@@ -297,13 +297,13 @@ int main(const int argc, string_t argv[])
     }
 
     // Create the OS window used for drawing. Needed to create the swap chain. 
-    Window::open(windowHeight, windowWidth);
+    Window::Create(windowHeight, windowWidth);
 
 #ifdef WIN32
     VkWin32SurfaceCreateInfoKHR surfaceInfo = {};
     surfaceInfo.sType     = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-    surfaceInfo.hinstance = Window::instance();
-    surfaceInfo.hwnd      = Window::handle();
+    surfaceInfo.hinstance = Window::Instance();
+    surfaceInfo.hwnd      = Window::Handle();
 #endif
 
     VkSurfaceKHR surface;
