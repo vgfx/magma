@@ -116,7 +116,6 @@ int main(const int argc, string_t argv[])
     uint32_t graphicsQueueFamilyIndex       = UINT32_MAX;
     uint32_t computeQueueFamilyIndex        = UINT32_MAX;
     uint32_t transferQueueFamilyIndex       = UINT32_MAX;
-    uint32_t sparseResourceQueueFamilyIndex = UINT32_MAX;
 
     // Select a physical device, and query its properties.
     for (uint32_t d = 0; d < physicalDeviceCount; d++)
@@ -171,8 +170,7 @@ int main(const int argc, string_t argv[])
 
         constexpr VkQueueFlags primaryQueueFlags = VK_QUEUE_GRAPHICS_BIT
                                                  | VK_QUEUE_COMPUTE_BIT
-                                                 | VK_QUEUE_TRANSFER_BIT
-                                                 | VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
+                                                 | VK_QUEUE_TRANSFER_BIT;
 
         // We rely on the graphics queue to support all functionality.
         if ((queueFlags & primaryQueueFlags) == primaryQueueFlags)
@@ -186,10 +184,6 @@ int main(const int argc, string_t argv[])
         else if (queueFlags & VK_QUEUE_TRANSFER_BIT)
         {
             transferQueueFamilyIndex = q;
-        }
-        else if (queueFlags & VK_QUEUE_SPARSE_BINDING_BIT)
-        {
-            sparseResourceQueueFamilyIndex = q;
         }
     }
 
@@ -233,16 +227,6 @@ int main(const int argc, string_t argv[])
         queueCount++;
     }
 
-    if (sparseResourceQueueFamilyIndex != UINT32_MAX)
-    {
-        queueInfos[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueInfos[queueCount].queueFamilyIndex = sparseResourceQueueFamilyIndex;
-        queueInfos[queueCount].queueCount       = 1;
-        queueInfos[queueCount].pQueuePriorities = &normalPriority;        
-
-        queueCount++;
-    }
-
     // Create a virtual device. Enable all supported features.
     VkDeviceCreateInfo virtualDeviceInfo      = {};
     virtualDeviceInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -258,7 +242,7 @@ int main(const int argc, string_t argv[])
     CHECK_INT(vkCreateDevice(physicalDevice, &virtualDeviceInfo, allocator, &virtualDevice),
               "Failed to create a virtual graphics device.");
 
-    VkQueue graphicsQueue, computeQueue, transferQueue, sparseResourceQueue;
+    VkQueue graphicsQueue, computeQueue, transferQueue;
 
     if (graphicsQueueFamilyIndex != UINT32_MAX)
     {
@@ -283,16 +267,6 @@ int main(const int argc, string_t argv[])
     {
         // No async transfers, fall back to the graphics queue.
         transferQueue = graphicsQueue;
-    }
-
-    if (sparseResourceQueueFamilyIndex != UINT32_MAX)
-    {
-        vkGetDeviceQueue(virtualDevice, sparseResourceQueueFamilyIndex, 0, &sparseResourceQueue);
-    }
-    else
-    {
-        // No async sparse resource management, fall back to the graphics queue.
-        sparseResourceQueue = graphicsQueue;
     }
 
     // Create the OS window used for drawing. Needed to create the swap chain. 
