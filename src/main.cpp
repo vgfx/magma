@@ -102,6 +102,20 @@ int main(const int argc, string_t argv[])
     CHECK_INT(vkCreateInstance(&instanceInfo, allocator, &instance),
               "Failed to create a graphics API instance.");
 
+    // Create the OS window used for drawing. Needed to create the swap chain. 
+    Window::Create(windowHeight, windowWidth);
+
+#ifdef WIN32
+    VkWin32SurfaceCreateInfoKHR surfaceInfo = {};
+    surfaceInfo.sType     = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    surfaceInfo.hinstance = Window::Instance();
+    surfaceInfo.hwnd      = Window::Handle();
+#endif
+
+    VkSurfaceKHR surface;
+    CHECK_INT(vkCreateSurfaceKHR(instance, &surfaceInfo, allocator, &surface),
+              "Failed to create a presentation surface.");
+
     uint32_t physicalDeviceCount;
     CHECK_INT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, nullptr),
               "Failed to enumerate physical graphics devices.");
@@ -113,24 +127,77 @@ int main(const int argc, string_t argv[])
     VkPhysicalDevice         physicalDevice = nullptr;
     VkPhysicalDeviceFeatures physicalDeviceFeatures;
               
-    uint32_t graphicsQueueFamilyIndex       = UINT32_MAX;
-    uint32_t computeQueueFamilyIndex        = UINT32_MAX;
-    uint32_t transferQueueFamilyIndex       = UINT32_MAX;
+    uint32_t graphicsQueueFamilyIndex, computeQueueFamilyIndex, transferQueueFamilyIndex;
 
     // Select a physical device, and query its properties.
-    for (uint32_t d = 0; d < physicalDeviceCount; d++)
+    for (uint32_t i = 0; i < physicalDeviceCount; i++)
     {
-        VkPhysicalDevice device = physicalDevices[d];
+        VkPhysicalDevice device = physicalDevices[i];
+        
+        uint32_t deviceExtensionCount;
+        CHECK_INT(vkEnumerateDeviceExtensionProperties(device, nullptr, &deviceExtensionCount, nullptr),
+                  "Failed to enumerate extensions supported by the graphics device.");
+
+        // Note: VkExtensionProperties is large, so we have to allocate on the heap.
+        auto deviceExtensions = std::make_unique<VkExtensionProperties[]>(deviceExtensionCount);
+        CHECK_INT(vkEnumerateDeviceExtensionProperties(device, nullptr, &deviceExtensionCount, deviceExtensions.get()),
+                  "Failed to enumerate extensions supported by the graphics device.");
+
+        bool deviceSupportsRequiredExtensions = true;
+
+        // Check whether all the required extensions are supported.
+        for (string_t extName : requiredDeviceExtensions)
+        {
+            deviceSupportsRequiredExtensions &= ContainsExtension(extName, deviceExtensions.get(), deviceExtensionCount);
+        }
+
+        uint32_t queueFamilyCount;
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+        VkQueueFamilyProperties queueFamilies[VK_MAX_QUEUE_FAMILIES];
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies);
+
+        // Enumerate all queue families.
+        graphicsQueueFamilyIndex = computeQueueFamilyIndex = transferQueueFamilyIndex = UINT32_MAX;
+
+        for (uint32_t q = 0; q < queueFamilyCount; q++)
+        {
+            VkBool32 queueSupportsPresentation;
+            CHECK_INT(vkGetPhysicalDeviceSurfaceSupportKHR(device, q, surface, &queueSupportsPresentation),
+                      "Failed to query the graphics device surface support.");
+
+            VkQueueFlags queueFlags = queueFamilies[q].queueFlags;
+
+            constexpr VkQueueFlags primaryQueueFlags = VK_QUEUE_GRAPHICS_BIT
+                                                     | VK_QUEUE_COMPUTE_BIT
+                                                     | VK_QUEUE_TRANSFER_BIT;
+
+            // We rely on the graphics queue to support all functionality.
+            if (queueSupportsPresentation && (queueFlags & primaryQueueFlags) == primaryQueueFlags)
+            {
+                graphicsQueueFamilyIndex = q;
+            }
+            else if (queueFlags & VK_QUEUE_COMPUTE_BIT)
+            {
+                computeQueueFamilyIndex = q;
+            }
+            else if (queueFlags & VK_QUEUE_TRANSFER_BIT)
+            {
+                transferQueueFamilyIndex = q;
+            }
+        }
 
         VkPhysicalDeviceProperties deviceProperties;
         VkPhysicalDeviceFeatures   deviceFeatures;
 
         vkGetPhysicalDeviceProperties(device, &deviceProperties);
         vkGetPhysicalDeviceFeatures(  device, &deviceFeatures);
-        
+
         // Select the first compatible GPU.
         if (deviceProperties.apiVersion >= appInfo.apiVersion &&
-            deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+            deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
+            deviceSupportsRequiredExtensions &&
+            graphicsQueueFamilyIndex != UINT32_MAX)
         {
             physicalDevice         = device;
             physicalDeviceFeatures = deviceFeatures;
@@ -140,52 +207,6 @@ int main(const int argc, string_t argv[])
     }
 
     ASSERT(physicalDevice, "Failed to find a compatible physical graphics device.");
-
-    uint32_t deviceExtensionCount;
-    CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, nullptr),
-              "Failed to enumerate extensions supported by the graphics device.");
-
-    // Note: VkExtensionProperties is large, so we have to allocate on the heap.
-    auto deviceExtensions = std::make_unique<VkExtensionProperties[]>(deviceExtensionCount);
-    CHECK_INT(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, deviceExtensions.get()),
-              "Failed to enumerate extensions supported by the graphics device.");
-
-    // Check whether all the required extensions are supported.
-    for (string_t extName : requiredDeviceExtensions)
-    {
-        ASSERT(ContainsExtension(extName, deviceExtensions.get(), deviceExtensionCount),
-               "The extension \'%s\' is not supported by the graphics device.", extName);
-    }
-
-    uint32_t queueFamilyCount;
-    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
-
-    VkQueueFamilyProperties queueFamilies[VK_MAX_QUEUE_FAMILIES];
-    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies);
-
-    // Enumerate all queue families.
-    for (uint32_t q = 0; q < queueFamilyCount; q++)
-    {
-        VkQueueFlags queueFlags = queueFamilies[q].queueFlags;
-
-        constexpr VkQueueFlags primaryQueueFlags = VK_QUEUE_GRAPHICS_BIT
-                                                 | VK_QUEUE_COMPUTE_BIT
-                                                 | VK_QUEUE_TRANSFER_BIT;
-
-        // We rely on the graphics queue to support all functionality.
-        if ((queueFlags & primaryQueueFlags) == primaryQueueFlags)
-        {
-            graphicsQueueFamilyIndex = q;
-        }
-        else if (queueFlags & VK_QUEUE_COMPUTE_BIT)
-        {
-            computeQueueFamilyIndex = q;
-        }
-        else if (queueFlags & VK_QUEUE_TRANSFER_BIT)
-        {
-            transferQueueFamilyIndex = q;
-        }
-    }
 
     // Create one queue per family.
     uint32_t                queueCount = 0;
@@ -201,10 +222,6 @@ int main(const int argc, string_t argv[])
         queueInfos[queueCount].pQueuePriorities = &normalPriority;        
 
         queueCount++;
-    }
-    else
-    {
-        CHECK_INT(graphicsQueueFamilyIndex, "Failed to find the graphics queue index.");
     }
 
     if (computeQueueFamilyIndex != UINT32_MAX)
@@ -268,20 +285,6 @@ int main(const int argc, string_t argv[])
         // No async transfers, fall back to the graphics queue.
         transferQueue = graphicsQueue;
     }
-
-    // Create the OS window used for drawing. Needed to create the swap chain. 
-    Window::Create(windowHeight, windowWidth);
-
-#ifdef WIN32
-    VkWin32SurfaceCreateInfoKHR surfaceInfo = {};
-    surfaceInfo.sType     = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-    surfaceInfo.hinstance = Window::Instance();
-    surfaceInfo.hwnd      = Window::Handle();
-#endif
-
-    VkSurfaceKHR surface;
-    CHECK_INT(vkCreateSurfaceKHR(instance, &surfaceInfo, allocator, &surface),
-              "Failed to create a presentation surface.");
 
     // Clean up.
     // API note: you only have to vkDestroy() objects you vkCreate().
