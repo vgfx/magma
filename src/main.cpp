@@ -26,22 +26,11 @@ int main(const int argc, string_t argv[])
     renderer.renderBackEnd->CreateDisplaySurface(window);
     renderer.renderBackEnd->CreateGraphicsDevice();
     renderer.renderBackEnd->CreateSyncPrimitives();
-
-    //uint32_t surfaceFormatCount;
-    //CHECK_INT(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, nullptr),
-    //          "Failed to enumerate surface formats supported by the graphics device.");
-
-    //auto surfaceFormats = std::make_unique<VkSurfaceFormatKHR[]>(surfaceFormatCount);
-    //CHECK_INT(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, surfaceFormats),
-    //          "Failed to enumerate  surface formats supported by the graphics device.");
-
-    //VkSurfaceCapabilitiesKHR surfaceCapabilities;
-    //CHECK_INT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCapabilities),
-    //          "Failed to query surface capabilities of the graphics device.");
+    renderer.renderBackEnd->CreateSwapChain();
 
     // Clean up.
     // API note: you only have to vkDestroy() objects you vkCreate().
-
+    renderer.renderBackEnd->DestroySwapChain();
     renderer.renderBackEnd->DestroySyncPrimitives();
     renderer.renderBackEnd->DestroyGraphicsDevice();
     renderer.renderBackEnd->DestroyDisplaySurface();

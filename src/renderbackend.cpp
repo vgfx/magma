@@ -2,6 +2,7 @@
 #include "utility.h"
 #include "window.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <memory>
@@ -43,19 +44,15 @@ bool ContainsVulkanExtension(string_t name, const VkExtensionProperties list[], 
     return result;
 }
 
-VkResult vkCreateSurfaceKHR(VkInstance instance, const void* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface)
-{
-#ifdef WIN32
-    return vkCreateWin32SurfaceKHR(instance, static_cast<const VkWin32SurfaceCreateInfoKHR*>(pCreateInfo), pAllocator, pSurface);  
-#endif
-}
-
 VulkanRenderBackEnd::VulkanRenderBackEnd()
 {
-    allocator = nullptr; // TODO
+    // Careful with memset() and VTable.
+    byte_t* start = reinterpret_cast<byte_t*>(&allocator);
+    byte_t* end   = reinterpret_cast<byte_t*>(this + 1);
+    memset(start, 0, static_cast<size_t>(end - start));
 }
 
-VulkanInstanceProperties VulkanRenderBackEnd::FillInstanceProperties() const
+VulkanInstanceProperties VulkanRenderBackEnd::GetInstanceProperties() const
 {
     // Warning: these must be static so that we can take (and store) pointers to these strings.
     static string_t requiredExtensions[VK_REQ_INSTANCE_EXTENSIONS] = { VK_KHR_SURFACE_EXTENSION_NAME, VK_PLATFORM_SURFACE_EXTENSION_NAME };
@@ -80,8 +77,8 @@ VulkanInstanceProperties VulkanRenderBackEnd::FillInstanceProperties() const
               "Failed to enumerate extensions supported by the graphics API.");
 
     // Allocate the max size up front.
-    ip.enabledExtensionCount = 0;
-    ip.enabledExtensions     = new string_t[VK_REQ_INSTANCE_EXTENSIONS + VK_OPT_INSTANCE_EXTENSIONS];
+    ip.activeExtensionCount = 0;
+    ip.activeExtensions     = new string_t[VK_REQ_INSTANCE_EXTENSIONS + VK_OPT_INSTANCE_EXTENSIONS];
 
     // Check whether all the required extensions are supported.
     for (string_t extName : requiredExtensions)
@@ -89,7 +86,7 @@ VulkanInstanceProperties VulkanRenderBackEnd::FillInstanceProperties() const
         ASSERT(ContainsVulkanExtension(extName, ip.supportedExtensions, ip.supportedExtensionCount),
                "The required extension \'%s\' is not supported by the graphics API.", extName);
 
-        ip.enabledExtensions[ip.enabledExtensionCount++] = extName;
+        ip.activeExtensions[ip.activeExtensionCount++] = extName;
     }
 
     // Check whether any of the optional extensions are supported.
@@ -97,7 +94,7 @@ VulkanInstanceProperties VulkanRenderBackEnd::FillInstanceProperties() const
     {
         if (ContainsVulkanExtension(extName, ip.supportedExtensions, ip.supportedExtensionCount))
         {
-            ip.enabledExtensions[ip.enabledExtensionCount++] = extName;
+            ip.activeExtensions[ip.activeExtensionCount++] = extName;
         }
     }
 
@@ -106,7 +103,7 @@ VulkanInstanceProperties VulkanRenderBackEnd::FillInstanceProperties() const
 
 void VulkanRenderBackEnd::CreateApiInstance()
 {
-    this->instanceProperties = FillInstanceProperties();
+    this->instanceProperties = GetInstanceProperties();
 
     VkApplicationInfo appInfo  = {};
     appInfo.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -121,8 +118,8 @@ void VulkanRenderBackEnd::CreateApiInstance()
     instanceInfo.pApplicationInfo        = &appInfo;
     instanceInfo.enabledLayerCount       = instanceProperties.enabledLayerCount;
     instanceInfo.ppEnabledLayerNames     = instanceProperties.enabledLayers;
-    instanceInfo.enabledExtensionCount   = instanceProperties.enabledExtensionCount;
-    instanceInfo.ppEnabledExtensionNames = instanceProperties.enabledExtensions;
+    instanceInfo.enabledExtensionCount   = instanceProperties.activeExtensionCount;
+    instanceInfo.ppEnabledExtensionNames = instanceProperties.activeExtensions;
 
     CHECK_INT(vkCreateInstance(&instanceInfo, allocator, &instance),
               "Failed to create a graphics API instance.");
@@ -134,8 +131,18 @@ void VulkanRenderBackEnd::DestroyApiInstance()
     vkDestroyInstance(instance, allocator);
 }
 
+VkResult vkCreateSurfaceKHR(VkInstance instance, const void* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface)
+{
+#ifdef WIN32
+    return vkCreateWin32SurfaceKHR(instance, static_cast<const VkWin32SurfaceCreateInfoKHR*>(pCreateInfo), pAllocator, pSurface);  
+#endif
+}
+
 void VulkanRenderBackEnd::CreateDisplaySurface(const Window& window)
 {
+    surfaceDimensions.width  = window.Width();
+    surfaceDimensions.height = window.Height();
+
 #ifdef WIN32
     VkWin32SurfaceCreateInfoKHR surfaceInfo = {};
     surfaceInfo.sType     = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
@@ -152,7 +159,7 @@ void VulkanRenderBackEnd::DestroyDisplaySurface()
     vkDestroySurfaceKHR(instance, surface, allocator);
 }
 
-VulkanDeviceProperties VulkanRenderBackEnd::FillDeviceProperties() const
+VulkanDeviceProperties VulkanRenderBackEnd::GetDeviceProperties() const
 {
     // Warning: these must be static so that we can take (and store) pointers to these strings.
     static string_t requiredExtensions[VK_REQ_DEVICE_EXTENSIONS] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -232,6 +239,11 @@ VulkanDeviceProperties VulkanRenderBackEnd::FillDeviceProperties() const
             supportsCompute &&     
             supportsPresentation) 
         {
+            // Prevent memory leaks in case we enter this block several times.
+            delete[] dp.supportedExtensions;
+            delete[] dp.activeExtensions;
+            delete[] dp.queueFamilies;
+
             dp.physicalDevice           = physicalDevice;
             dp.physicalDeviceProperties = physicalDeviceProperties;
             dp.physicalDeviceFeatures   = physicalDeviceFeatures;
@@ -239,13 +251,13 @@ VulkanDeviceProperties VulkanRenderBackEnd::FillDeviceProperties() const
             dp.supportedExtensionCount  = supportedExtensionCount;
             dp.supportedExtensions      = supportedExtensions.release();
 
-            dp.enabledExtensionCount    = 0;
-            dp.enabledExtensions        = new string_t[VK_REQ_DEVICE_EXTENSIONS + VK_OPT_DEVICE_EXTENSIONS];
+            dp.activeExtensionCount     = 0;
+            dp.activeExtensions         = new string_t[VK_REQ_DEVICE_EXTENSIONS + VK_OPT_DEVICE_EXTENSIONS];
 
             // Copy all of the required extensions. At this point, we know that all of them are supported.
             for (string_t extName : requiredExtensions)
             {
-                dp.enabledExtensions[dp.enabledExtensionCount++] = extName;
+                dp.activeExtensions[dp.activeExtensionCount++] = extName;
             }
 
             // Check whether any of the optional extensions are supported.
@@ -253,7 +265,7 @@ VulkanDeviceProperties VulkanRenderBackEnd::FillDeviceProperties() const
             {
                 if (ContainsVulkanExtension(extName, dp.supportedExtensions, dp.supportedExtensionCount))
                 {
-                    dp.enabledExtensions[dp.enabledExtensionCount++] = extName;
+                    dp.activeExtensions[dp.activeExtensionCount++] = extName;
                 }
             }
 
@@ -276,7 +288,7 @@ VulkanDeviceProperties VulkanRenderBackEnd::FillDeviceProperties() const
 
 void VulkanRenderBackEnd::CreateGraphicsDevice()
 {
-    this->deviceProperties = FillDeviceProperties();
+    this->deviceProperties = GetDeviceProperties();
 
     // The queue family index is overwritten only if a dedicated queue is available
     // (except for the present queue which is always assigned).
@@ -426,8 +438,8 @@ void VulkanRenderBackEnd::CreateGraphicsDevice()
     deviceInfo.pQueueCreateInfos       = queueInfos;
     deviceInfo.enabledLayerCount       = instanceProperties.enabledLayerCount;
     deviceInfo.ppEnabledLayerNames     = instanceProperties.enabledLayers;
-    deviceInfo.enabledExtensionCount   = deviceProperties.enabledExtensionCount;
-    deviceInfo.ppEnabledExtensionNames = deviceProperties.enabledExtensions;
+    deviceInfo.enabledExtensionCount   = deviceProperties.activeExtensionCount;
+    deviceInfo.ppEnabledExtensionNames = deviceProperties.activeExtensions;
     deviceInfo.pEnabledFeatures        = &deviceProperties.physicalDeviceFeatures;
 
     CHECK_INT(vkCreateDevice(deviceProperties.physicalDevice, &deviceInfo, allocator, &device),
@@ -472,4 +484,106 @@ void VulkanRenderBackEnd::DestroySyncPrimitives()
 {
     vkDeviceWaitIdle(device);
     vkDestroySemaphore(device, semaphore, allocator);
+}
+
+VulkanSwapChainProperties VulkanRenderBackEnd::GetSwapChainProperties() const
+{
+    VulkanSwapChainProperties sp = {};
+
+    CHECK_INT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(deviceProperties.physicalDevice, surface, &sp.surfaceCapabilities),
+              "Failed to query surface capabilities of the graphics device.");
+
+    CHECK_INT(vkGetPhysicalDeviceSurfaceFormatsKHR(deviceProperties.physicalDevice, surface, &sp.surfaceFormatCount, nullptr),
+              "Failed to enumerate surface formats supported by the graphics device.");
+
+    sp.surfaceFormats = new VkSurfaceFormatKHR[sp.surfaceFormatCount];
+    CHECK_INT(vkGetPhysicalDeviceSurfaceFormatsKHR(deviceProperties.physicalDevice, surface, &sp.surfaceFormatCount, sp.surfaceFormats),
+              "Failed to enumerate surface formats supported by the graphics device.");
+
+    CHECK_INT(vkGetPhysicalDeviceSurfacePresentModesKHR(deviceProperties.physicalDevice, surface, &sp.presentModeCount, nullptr),
+              "Failed to enumerate presentation modes supported by the graphics device.");
+
+    sp.presentModes = new VkPresentModeKHR[sp.presentModeCount];
+    CHECK_INT(vkGetPhysicalDeviceSurfacePresentModesKHR(deviceProperties.physicalDevice, surface, &sp.presentModeCount, sp.presentModes),
+              "Failed to enumerate presentation modes supported by the graphics device.");
+
+    // Pick a surface format. Prefer sRGB.
+    // TODO: HDR, WCG.
+    sp.activeSurfaceFormat = { VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+
+    for (uint32_t i = 0; i < sp.surfaceFormatCount; i++)
+    {
+        if (sp.surfaceFormats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        {
+            sp.activeSurfaceFormat = sp.surfaceFormats[i];
+        }
+    }
+    
+    // These two flags allow color writes and clears.
+    sp.activeSurfaceUsageFlags  = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    sp.activeSurfaceUsageFlags &= sp.surfaceCapabilities.supportedUsageFlags;
+    
+    // TODO: rotation and scaling.
+    sp.activeSurfaceTransforms  = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+
+    // Select the presentation mode.
+    // VK_PRESENT_MODE_FIFO_KHR is always available, but VK_PRESENT_MODE_MAILBOX_KHR results in lower latency.
+    // Neither mode allows tearing.
+    sp.activePresentMode = VK_PRESENT_MODE_FIFO_KHR;
+
+    for (uint32_t i = 0; i < sp.presentModeCount; i++)
+    {
+        if (sp.presentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
+        {
+            sp.activePresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+        }
+    }
+
+    return sp;
+}
+
+void VulkanRenderBackEnd::CreateSwapChain()
+{
+    this->swapChainProperties = GetSwapChainProperties();
+
+    // Triple buffering is highly desirable for max performance.
+    // It is also required for the VK_PRESENT_MODE_MAILBOX_KHR mode.
+    // https://software.intel.com/en-us/articles/sample-application-for-direct3d-12-flip-model-swap-chains
+    bufferCount = 3;
+    bufferCount = std::max(bufferCount, swapChainProperties.surfaceCapabilities.minImageCount);
+    bufferCount = std::min(bufferCount, swapChainProperties.surfaceCapabilities.maxImageCount);
+
+    // Adjust the resolution if needed.
+    if (surfaceDimensions.width  != swapChainProperties.surfaceCapabilities.currentExtent.width ||
+        surfaceDimensions.height != swapChainProperties.surfaceCapabilities.currentExtent.height)
+    {
+        surfaceDimensions.width  = std::max(surfaceDimensions.width,  swapChainProperties.surfaceCapabilities.minImageExtent.width);
+        surfaceDimensions.width  = std::min(surfaceDimensions.width,  swapChainProperties.surfaceCapabilities.maxImageExtent.width);
+        surfaceDimensions.height = std::max(surfaceDimensions.height, swapChainProperties.surfaceCapabilities.minImageExtent.height);
+        surfaceDimensions.height = std::min(surfaceDimensions.height, swapChainProperties.surfaceCapabilities.maxImageExtent.height);
+    }
+
+    VkSwapchainCreateInfoKHR swapChainInfo = {};
+    swapChainInfo.sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    swapChainInfo.surface          = surface;
+    swapChainInfo.minImageCount    = bufferCount;
+    swapChainInfo.imageFormat      = swapChainProperties.activeSurfaceFormat.format;
+    swapChainInfo.imageColorSpace  = swapChainProperties.activeSurfaceFormat.colorSpace;
+    swapChainInfo.imageExtent      = surfaceDimensions;
+    swapChainInfo.imageArrayLayers = 1;         // Only for stereo rendering
+    swapChainInfo.imageUsage       = swapChainProperties.activeSurfaceUsageFlags;
+    swapChainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    swapChainInfo.preTransform     = swapChainProperties.activeSurfaceTransforms;
+    swapChainInfo.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    swapChainInfo.presentMode      = swapChainProperties.activePresentMode;
+    swapChainInfo.clipped          = VK_TRUE;   // Skip rendering of fragments which are not visible
+    swapChainInfo.oldSwapchain     = swapChain; // In case we want to re-create it
+
+    CHECK_INT(vkCreateSwapchainKHR(device, &swapChainInfo, allocator, &swapChain),
+              "Failed to create a swap chain.");
+}
+
+void VulkanRenderBackEnd::DestroySwapChain()
+{
+    vkDestroySwapchainKHR(device, swapChain, allocator);
 }
