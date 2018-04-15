@@ -201,18 +201,18 @@ VulkanDeviceProperties VulkanRenderBackEnd::FillDeviceProperties() const
         bool supportsPresentation = false;
 
         // Determine whether the available queues cover our needs.
-        for (uint32_t q = 0; q < queueFamilyCount; q++)
+        for (uint32_t f = 0; f < queueFamilyCount; f++)
         {
             VkBool32 queueCanPresent;
-            CHECK_INT(vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, q, surface, &queueCanPresent),
+            CHECK_INT(vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, f, surface, &queueCanPresent),
                       "Failed to query the graphics device surface support.");
 
             if (queueCanPresent)
             {
-                queueFamilies[q].queueFlags |= VK_QUEUE_PRESENT_BIT;
+                queueFamilies[f].queueFlags |= VK_QUEUE_PRESENT_BIT;
             }
 
-            VkQueueFlags queueFlags = queueFamilies[q].queueFlags;
+            VkQueueFlags queueFlags = queueFamilies[f].queueFlags;
 
             supportsPresentation |= static_cast<bool>(queueCanPresent);
             supportsGraphics     |= static_cast<bool>(queueFlags & VK_QUEUE_GRAPHICS_BIT);
@@ -278,100 +278,151 @@ void VulkanRenderBackEnd::CreateGraphicsDevice()
 {
     this->deviceProperties = FillDeviceProperties();
 
-    uint32_t graphicsQueueFamilyIndex = UINT32_MAX,
-             computeQueueFamilyIndex  = UINT32_MAX,
-             transferQueueFamilyIndex = UINT32_MAX,
-             presentQueueFamilyIndex  = UINT32_MAX;
+    // The queue family index is overwritten only if a dedicated queue is available
+    // (except for the present queue which is always assigned).
+    uint32_t graphicsQueueIndex = 0, graphicsQueueFamilyIndex = UINT32_MAX,
+             computeQueueIndex  = 0, computeQueueFamilyIndex  = UINT32_MAX,
+             transferQueueIndex = 0, transferQueueFamilyIndex = UINT32_MAX,
+             presentQueueIndex  = 0, presentQueueFamilyIndex  = UINT32_MAX;
 
-    for (uint32_t q = 0; q < deviceProperties.queueFamilyCount; q++)
+    for (uint32_t f = 0; f < deviceProperties.queueFamilyCount; f++)
     {
-        VkQueueFlags queueFlags = deviceProperties.queueFamilies[q].queueFlags;
+        uint32_t i = 0, n = deviceProperties.queueFamilies[f].queueCount;
+
+        VkQueueFlags queueFlags = deviceProperties.queueFamilies[f].queueFlags;
 
         if (queueFlags & VK_QUEUE_GRAPHICS_BIT)
         {
-            graphicsQueueFamilyIndex = q;
+            graphicsQueueFamilyIndex = f;
+            graphicsQueueIndex       = i++;
+
+            // Use a dedicated compute queue, if possible.
+            if ((queueFlags & VK_QUEUE_COMPUTE_BIT) && (computeQueueFamilyIndex == UINT32_MAX) && (i < n))
+            {
+                computeQueueFamilyIndex = f;
+                computeQueueIndex       = i++;
+            }
+
+            // Use a dedicated transfer queue, if possible.
+            if ((queueFlags & VK_QUEUE_TRANSFER_BIT) && (transferQueueFamilyIndex == UINT32_MAX) && (i < n))
+            {
+                transferQueueFamilyIndex = f;
+                transferQueueIndex       = i++;
+            }
 
             // Use the compute queue to present, if possible.
             if ((queueFlags & VK_QUEUE_PRESENT_BIT) && (presentQueueFamilyIndex == UINT32_MAX ||
                                                         presentQueueFamilyIndex != computeQueueFamilyIndex))
             {
-                presentQueueFamilyIndex = q;
+                presentQueueFamilyIndex = f;
+                presentQueueIndex       = (queueFlags & VK_QUEUE_COMPUTE_BIT) ? computeQueueIndex
+                                                                              : graphicsQueueIndex;
             }
         }
         else if (queueFlags & VK_QUEUE_COMPUTE_BIT)
         {
-            computeQueueFamilyIndex = q;
+            computeQueueFamilyIndex = f;
+            computeQueueIndex       = i++;
+
+            // Use a dedicated transfer queue, if possible.
+            if ((queueFlags & VK_QUEUE_TRANSFER_BIT) && (transferQueueFamilyIndex == UINT32_MAX) && (i < n))
+            {
+                transferQueueFamilyIndex = f;
+                transferQueueIndex       = i++;
+            }
 
             // Use the compute queue to present, if possible.
             if (queueFlags & VK_QUEUE_PRESENT_BIT)
             {
-                presentQueueFamilyIndex = q;
+                presentQueueFamilyIndex = f;
+                presentQueueIndex       = computeQueueIndex;
             }
         }
         else if (queueFlags & VK_QUEUE_TRANSFER_BIT)
         {
-            transferQueueFamilyIndex = q;
-        }
+            transferQueueFamilyIndex = f;
+            transferQueueIndex       = 0;
 
-        if ((queueFlags & VK_QUEUE_PRESENT_BIT) && (presentQueueFamilyIndex == UINT32_MAX))
+            // Avoid presenting from the transfer queue, if possible.
+            if ((queueFlags & VK_QUEUE_PRESENT_BIT) && (presentQueueFamilyIndex == UINT32_MAX))
+            {
+                presentQueueFamilyIndex = f;
+                presentQueueIndex       = 0;
+            }
+        }
+        else if ((queueFlags & VK_QUEUE_PRESENT_BIT) && (presentQueueFamilyIndex == UINT32_MAX))
         {
             // Use a dedicated presentation queue as the last resort.
-            presentQueueFamilyIndex = q;
+            presentQueueFamilyIndex = f;
+            presentQueueIndex       = 0;
         }
     }
-        
-    // Create one queue per family.
-    uint32_t                queueCount = 0;
+
+    uint32_t                queueInfoCount = 0;
     VkDeviceQueueCreateInfo queueInfos[VK_MAX_QUEUE_FAMILIES] = {};
 
-    constexpr float highPriority = 1.0f;
+    // TODO: prioritize.
+    constexpr float priorities[] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     if (graphicsQueueFamilyIndex != UINT32_MAX)
     {
-        queueInfos[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueInfos[queueCount].queueFamilyIndex = graphicsQueueFamilyIndex;
-        queueInfos[queueCount].queueCount       = 1;
-        queueInfos[queueCount].pQueuePriorities = &highPriority;        
+        uint32_t count = 1;
 
-        queueCount++;
+        if (graphicsQueueFamilyIndex == computeQueueFamilyIndex)  count++;
+        if (graphicsQueueFamilyIndex == transferQueueFamilyIndex) count++;
+
+        queueInfos[queueInfoCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueInfos[queueInfoCount].queueFamilyIndex = graphicsQueueFamilyIndex;
+        queueInfos[queueInfoCount].queueCount       = count;
+        queueInfos[queueInfoCount].pQueuePriorities = priorities;        
+
+        queueInfoCount++;
     }
 
-    if (computeQueueFamilyIndex != UINT32_MAX)
+    if (computeQueueFamilyIndex != UINT32_MAX &&
+        computeQueueFamilyIndex != graphicsQueueFamilyIndex)
     {
-        queueInfos[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueInfos[queueCount].queueFamilyIndex = computeQueueFamilyIndex;
-        queueInfos[queueCount].queueCount       = 1;
-        queueInfos[queueCount].pQueuePriorities = &highPriority;        
+        uint32_t count = 1;
 
-        queueCount++;
+        if (computeQueueFamilyIndex == transferQueueFamilyIndex) count++;
+
+        queueInfos[queueInfoCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueInfos[queueInfoCount].queueFamilyIndex = computeQueueFamilyIndex;
+        queueInfos[queueInfoCount].queueCount       = count;
+        queueInfos[queueInfoCount].pQueuePriorities = priorities;        
+
+        queueInfoCount++;
     }
 
-    if (transferQueueFamilyIndex != UINT32_MAX)
+    if (transferQueueFamilyIndex != UINT32_MAX &&
+        transferQueueFamilyIndex != graphicsQueueFamilyIndex && 
+        transferQueueFamilyIndex != computeQueueFamilyIndex)
     {
-        queueInfos[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueInfos[queueCount].queueFamilyIndex = transferQueueFamilyIndex;
-        queueInfos[queueCount].queueCount       = 1;
-        queueInfos[queueCount].pQueuePriorities = &highPriority;        
+        queueInfos[queueInfoCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueInfos[queueInfoCount].queueFamilyIndex = transferQueueFamilyIndex;
+        queueInfos[queueInfoCount].queueCount       = 1;
+        queueInfos[queueInfoCount].pQueuePriorities = priorities;        
 
-        queueCount++;
+        queueInfoCount++;
     }
 
-    if (presentQueueFamilyIndex != graphicsQueueFamilyIndex &&
-        presentQueueFamilyIndex != computeQueueFamilyIndex  &&
+    if (presentQueueFamilyIndex != UINT32_MAX &&
+        presentQueueFamilyIndex != graphicsQueueFamilyIndex &&
+        presentQueueFamilyIndex != computeQueueFamilyIndex &&
         presentQueueFamilyIndex != transferQueueFamilyIndex)
     {
-        queueInfos[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueInfos[queueCount].queueFamilyIndex = presentQueueFamilyIndex;
-        queueInfos[queueCount].queueCount       = 1;
-        queueInfos[queueCount].pQueuePriorities = &highPriority;        
+        queueInfos[queueInfoCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueInfos[queueInfoCount].queueFamilyIndex = presentQueueFamilyIndex;
+        queueInfos[queueInfoCount].queueCount       = 1;
+        queueInfos[queueInfoCount].pQueuePriorities = priorities;        
 
-        queueCount++;
+        queueInfoCount++;
     }
 
     // Create a virtual device. Enable all supported features.
     VkDeviceCreateInfo deviceInfo      = {};
     deviceInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    deviceInfo.queueCreateInfoCount    = queueCount;
+    deviceInfo.queueCreateInfoCount    = queueInfoCount;
     deviceInfo.pQueueCreateInfos       = queueInfos;
     deviceInfo.enabledLayerCount       = instanceProperties.enabledLayerCount;
     deviceInfo.ppEnabledLayerNames     = instanceProperties.enabledLayers;
@@ -382,48 +433,24 @@ void VulkanRenderBackEnd::CreateGraphicsDevice()
     CHECK_INT(vkCreateDevice(deviceProperties.physicalDevice, &deviceInfo, allocator, &device),
               "Failed to create a virtual graphics device.");
 
-    if (graphicsQueueFamilyIndex != UINT32_MAX)
-    {
-        vkGetDeviceQueue(device, graphicsQueueFamilyIndex, 0, &graphicsQueue);
-    }
-
-    if (computeQueueFamilyIndex != UINT32_MAX)
-    {
-        vkGetDeviceQueue(device, computeQueueFamilyIndex, 0, &computeQueue);
-    }
-    else
+    if (computeQueueFamilyIndex == UINT32_MAX)
     {
         // No async compute, fall back to the graphics queue.
-        computeQueue = graphicsQueue;
+        computeQueueFamilyIndex = graphicsQueueFamilyIndex;
+        computeQueueIndex       = graphicsQueueIndex;
     }
 
-    if (transferQueueFamilyIndex != UINT32_MAX)
-    {
-        vkGetDeviceQueue(device, transferQueueFamilyIndex, 0, &transferQueue);
-    }
-    else
+    if (transferQueueFamilyIndex == UINT32_MAX)
     {
         // No async transfers, fall back to the graphics queue.
-        transferQueue = graphicsQueue;
+        transferQueueFamilyIndex = graphicsQueueFamilyIndex;
+        transferQueueFamilyIndex = graphicsQueueIndex;
     }
 
-    if (presentQueueFamilyIndex == computeQueueFamilyIndex)
-    {
-        presentQueue = computeQueue;
-    }
-    else if (presentQueueFamilyIndex == graphicsQueueFamilyIndex)
-    {
-        presentQueue = graphicsQueue;
-    }
-    else if (presentQueueFamilyIndex == transferQueueFamilyIndex)
-    {
-        presentQueue = transferQueue;
-    }
-    else
-    {
-        // Use a dedicated presentation queue.
-        vkGetDeviceQueue(device, presentQueueFamilyIndex, 0, &presentQueue);
-    }
+    vkGetDeviceQueue(device, graphicsQueueFamilyIndex, graphicsQueueIndex, &graphicsQueue);
+    vkGetDeviceQueue(device, computeQueueFamilyIndex,  computeQueueIndex,  &computeQueue);
+    vkGetDeviceQueue(device, transferQueueFamilyIndex, transferQueueIndex, &transferQueue);
+    vkGetDeviceQueue(device, presentQueueFamilyIndex,  presentQueueIndex,  &presentQueue);
 }
 
 void VulkanRenderBackEnd::DestroyGraphicsDevice()
