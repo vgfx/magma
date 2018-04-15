@@ -1,25 +1,14 @@
-// Clean up Windows header includes.
-#define NOMINMAX
-#define STRICT
-#define WIN32_LEAN_AND_MEAN
+#include "utility.h"
+#include "window.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cwchar>
 #include <Windows.h>
 
-#include "window.h"
-#include "utility.h"
-
-// Perform static member initialization.
-uint16_t  Window::m_width  = 0;
-uint16_t  Window::m_height = 0;
-HWND      Window::m_hwnd   = nullptr;
-HINSTANCE Window::m_hinst  = nullptr;
-
 // Main message handler.
-LRESULT CALLBACK WindowProc(const HWND hWnd, const UINT message,
-                            const WPARAM wParam, const LPARAM lParam)
+static LRESULT CALLBACK WindowProc(const HWND hWnd, const UINT message,
+                                   const WPARAM wParam, const LPARAM lParam)
 {
     switch (message)
     {
@@ -37,9 +26,9 @@ LRESULT CALLBACK WindowProc(const HWND hWnd, const UINT message,
     }
 }
 
-void Window::Create(const uint16_t width, const uint16_t height)
+Window::Window(const uint16_t width, const uint16_t height)
 {
-    m_width  = width;
+    m_width = width;
     m_height = height;
 
     // Set up the rectangle position and dimensions.
@@ -70,41 +59,59 @@ void Window::Create(const uint16_t width, const uint16_t height)
     ASSERT(m_hwnd, "CreateWindow failed.");
 }
 
-void Window::Show()
+Window::Window(Window&& other) noexcept
+{
+    TrivialMoveConstruct<Window>(this, &other);
+}
+
+Window& Window::operator=(Window&& other) noexcept
+{
+    return TrivialMoveAssign<Window>(this, &other);
+}
+
+Window::~Window()
+{
+    if (m_hwnd)
+    {
+        DestroyWindow(m_hwnd);
+    }
+}
+
+void Window::Show() const
 {
     assert(m_hwnd && "Uninitialized window handle.");
     ShowWindow(m_hwnd, SW_SHOWNORMAL);
 }
 
-void Window::Hide()
+void Window::Hide() const
 {
     assert(m_hwnd && "Uninitialized window handle.");
     ShowWindow(m_hwnd, SW_HIDE);
 }
 
-HINSTANCE Window::Instance()
+HINSTANCE Window::Instance() const
 {
     assert(m_hinst && "Uninitialized application handle.");
     return m_hinst;
 }
 
-HWND Window::Handle()
+HWND Window::Handle() const
 {
     assert(m_hwnd && "Uninitialized window handle.");
     return m_hwnd;
 }
 
-uint16_t Window::Width()
+uint16_t Window::Width() const
 {
     return m_width;
 }
 
-uint16_t Window::Height()
+uint16_t Window::Height() const
 {
     return m_height;
 }
 
-void Window::UpdateTitle(const float cpuFrameTime, const float gpuFrameTime)
+void Window::UpdateTitle(const float cpuFrameTime, const float gpuFrameTime) const
 {
     static wchar_t title[] = L"Magma > CPU: 00.00 ms | GPU: 00.00 ms";
     swprintf(title, _countof(title) + 1, L"Magma > CPU: %5.2f ms | GPU: %5.2f ms",

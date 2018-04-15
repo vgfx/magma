@@ -1,30 +1,43 @@
 #pragma once
 
-#include <minwindef.h>
+#include "definitions.h"
+
+#include <WinDef.h>
 
 // GUI Window.
-struct Window
+class Window
 {
 public:
+   RULE_OF_FIVE_MOVE_ONLY(Window);
+
    // Creates a window; takes the client (drawable) area dimensions (in pixels) as input.
-   static void Create(const uint16_t width, const uint16_t height);
+   Window(const uint16_t width, const uint16_t height);
+
    // Makes the window visible.
-   static void Show();
+   void Show() const;
+
    // Makes the window invisible.
-   static void Hide();
+   void Hide() const;
+
    // Returns the handle of the application.
-   static HINSTANCE Instance();
+   HINSTANCE Instance() const;
+
    // Returns the handle of the window.
-   static HWND Handle();
+   HWND Handle() const;
+
    // Returns the client (drawable) area width (in pixels).
-   static uint16_t Width();
+   uint16_t Width() const;
+
    // Returns the client (drawable) area height (in pixels).
-   static uint16_t Height();
+   uint16_t Height() const;
+
    // Displays information (in milliseconds) in the title bar.
    // 'cpuFrameTime', 'gpuFrameTime': the frame times (in milliseconds) of CPU/GPU time lines. 
-   static void UpdateTitle(const float cpuFrameTime, const float gpuFrameTime);
+   void UpdateTitle(const float cpuFrameTime, const float gpuFrameTime) const;
+
 private:
-   static uint16_t  m_width, m_height; // Client area dimensions
-   static HWND      m_hwnd;
-   static HINSTANCE m_hinst;
+
+   uint16_t  m_width, m_height; // Client area dimensions
+   HWND      m_hwnd;
+   HINSTANCE m_hinst;
 };

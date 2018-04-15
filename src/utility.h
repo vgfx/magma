@@ -1,15 +1,12 @@
 #pragma once
 
+#include "definitions.h"
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <malloc.h>
-
-using byte_t   = unsigned char;
-using size_t   = size_t;
-using sign_t   = ptrdiff_t;
-using string_t = const char*;
 
 // For internal use only!
 static inline void PrintInternal(FILE* stream, string_t prefix, string_t fmt, const va_list args)
@@ -98,7 +95,25 @@ do                                       \
 
 // Performs stack allocation for 'count' objects of the type T.
 template <typename T>
-T* Alloca(size_t count)
+T* StackAlloc(size_t count)
 {
     return static_cast<T*>(_alloca(count * sizeof(T)));
+}
+
+template <typename T>
+void TrivialMoveConstruct(T* dst, T* src)
+{
+    memcpy(dst, src, sizeof(T));
+    memset(src, 0,   sizeof(T));
+}
+
+template <typename T>
+T& TrivialMoveAssign(T* dst, T* src)
+{
+    if (dst != src)
+    {
+        TrivialMoveConstruct<T>(dst, src);
+    }
+
+    return *dst;
 }
